@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地 Claude Code 设置（含个人权限记录，不应提交）
+.claude/settings.local.json
+
+# 临时产物
+*.tmp
+~$*
+
+# 注意：不要忽略 *.pdf —— 示例成品与导出验证需要纳入版本管理
