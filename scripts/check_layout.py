@@ -24,6 +24,7 @@ check_layout.py —— 渲染后校验「A4 单页」这条核心承诺。
 """
 import argparse
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -129,13 +130,18 @@ def evaluate(pdf_path, expect=1, label=""):
 
 
 def _render(html_path, browser):
-    """渲染到临时 PDF，返回 (pdf_path 或 None, exit_code, message)。"""
+    """渲染到临时 PDF。
+
+    返回 (pdf_path, tmpdir, exit_code, message)：
+      - 成功时 exit_code 为 0，tmpdir 需由调用方负责清理
+      - 失败时 pdf_path 与 tmpdir 为 None
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from html_to_pdf import find_browser, render_pdf
 
     exe = browser or find_browser()
     if not exe:
-        return None, 3, (
+        return None, None, 3, (
             "[SKIP] 未执行排版校验：未找到 Chrome / Edge / Chromium。\n"
             "       请安装其中之一，或用 --browser 指定可执行文件路径。"
         )
@@ -144,34 +150,41 @@ def _render(html_path, browser):
     pdf = tmp / (html_path.stem + ".pdf")
     ok, message = render_pdf(html_path, pdf, browser=exe)
     if not ok:
-        return None, 3, f"[SKIP] 未执行排版校验：渲染失败。\n       {message}"
-    return pdf, 0, ""
+        # 渲染失败也要清掉刚建的临时目录，避免反复运行堆积
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None, None, 3, f"[SKIP] 未执行排版校验：渲染失败。\n       {message}"
+    return pdf, tmp, 0, ""
 
 
 def check_one(html_path, expect=1, browser=None, pdf=None):
     html_path = Path(html_path).resolve()
+    tmpdir = None
     if pdf:
         pdf_path = Path(pdf).resolve()
         if not pdf_path.is_file():
             print(f"[ERROR] PDF 不存在: {pdf_path}", file=sys.stderr)
             return 2
-        target, code, message = pdf_path, 0, ""
+        target = pdf_path
     else:
         if not html_path.is_file():
             print(f"[ERROR] HTML 不存在: {html_path}", file=sys.stderr)
             return 2
         print(f"渲染: {html_path}")
-        target, code, message = _render(html_path, browser)
+        target, tmpdir, code, message = _render(html_path, browser)
         if code:
             print(message)
             return code
 
-    code, lines = evaluate(target, expect=expect)
-    for line in lines:
-        print(line)
-    if code == 1:
-        print("\n[FAIL] 排版校验未通过。")
-    return code
+    try:
+        code, lines = evaluate(target, expect=expect)
+        for line in lines:
+            print(line)
+        if code == 1:
+            print("\n[FAIL] 排版校验未通过。")
+        return code
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def self_check(browser=None, expect=1):
@@ -185,14 +198,18 @@ def self_check(browser=None, expect=1):
             print(f"{name}: [ERROR] 模板缺失 {html}")
             failed += 1
             continue
-        target, code, message = _render(html, browser)
+        target, tmpdir, code, message = _render(html, browser)
         if code:
             print(f"{name}: {message}")
             skipped += 1
             continue
-        code, lines = evaluate(target, expect=expect, label=name)
-        for line in lines:
-            print(line)
+        try:
+            code, lines = evaluate(target, expect=expect, label=name)
+            for line in lines:
+                print(line)
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
         if code == 1:
             failed += 1
         elif code == 3:
